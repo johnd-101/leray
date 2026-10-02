@@ -1,0 +1,50 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Note {
+  id         String   @id @default(cuid())
+  title      String
+  content    String   @db.Text
+  color      String   @default("#E1F5FE")
+  tags       Json     @default("[]")
+  is_pinned  Boolean  @default(false)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+}
+
+model Appointment {
+  id          String   @id @default(cuid())
+  title       String
+  description String   @default("")
+  start_at    DateTime
+  end_at      DateTime
+  location    String   @default("")
+  attendees   Json     @default("[]")
+  status      String   @default("confirmed")
+  created_at  DateTime @default(now())
+}
+
+model Reminder {
+  id           String   @id @default(cuid())
+  title        String
+  notes        String   @default("")
+  due_at       DateTime
+  priority     String   @default("medium")
+  repeat       String   @default("none")
+  is_completed Boolean  @default(false)
+  created_at   DateTime @default(now())
+}
+
+model Task {
+  id         String   @id @default(cuid())
+  title      String
+  status     String   @default("todo")
+  priority   String   @default("medium")
+  created_at DateTime @default(now())
+}
