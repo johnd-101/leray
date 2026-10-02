@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/push-reminders?secret=random_secret_123_for_vercel_cron",
+      "schedule": "* * * * *"
+    }
+  ]
+}
