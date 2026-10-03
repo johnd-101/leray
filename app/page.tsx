@@ -1,12 +1,29 @@
 "use client";
 export const dynamic = 'force-dynamic';
 
+/*
+
+  QUICKSTACK APP - Main Page
+  Stack: Next.js App Router + API Routes + Lucide Icons + Tailwind
+  Features: Notes / Appointments / Reminders / Auth / Notifications / Theme
+
+*/
+
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { StickyNote, Calendar, Plus, Search, Clock, MapPin, X, Sun, Moon, Trash2, Pencil, AlertCircle, CircleCheck, Bell, LogOut, Lock, Eye, EyeOff, Wifi, Users } from 'lucide-react'
 
+// ================= CONFIG =================
+// APP_EMAIL/PASSWORD: env fallback for login - used in local auth check
 const APP_EMAIL = process.env.NEXT_PUBLIC_APP_EMAIL || "admin@jtech.com";
 const APP_PASSWORD = process.env.NEXT_PUBLIC_APP_PASSWORD || "Jtech101!!";
 
+// ================= TYPES =================
+// Theme: light/dark UI mode
+// Priority/Repeat/ApptStatus: enums for reminders and appointments
+// Note: pinned notes + tags + color
+// Appointment: title, start/end ISO, location, attendees, status
+// Reminder: due_at, priority, repeat, completed flag
+// Toast: in-app notification popup
 type Theme = 'light' | 'dark'
 type Priority = 'low' | 'medium' | 'high'
 type Repeat = 'none' | 'daily' | 'weekly' | 'monthly'
@@ -16,8 +33,12 @@ type Appointment = { id: string; title: string; description: string; start_at: s
 type Reminder = { id: string; title: string; notes: string; due_at: string; priority: Priority; repeat: Repeat; is_completed: boolean }
 type Toast = { id: string; title: string; body: string; type: string }
 
+// COLORS: palette for notes - user can pick one
 const COLORS = ["#FFF9C4", "#E1F5FE", "#E8F5E9", "#FCE4EC", "#F3E5F5", "#FFF3E0"]
 
+// ================= HELPERS: DATE CONVERSION =================
+// toLocalInput: ISO -> datetime-local input format YYYY-MM-DDTHH:mm (local timezone)
+// fromLocalInput: datetime-local -> ISO string for API
 function toLocalInput(isoStr: string) {
   if (!isoStr) return ''
   const d = new Date(isoStr)
@@ -27,6 +48,8 @@ function toLocalInput(isoStr: string) {
 function fromLocalInput(local: string) {
   return local? new Date(local).toISOString() : new Date().toISOString()
 }
+
+// safeTags: ensures tags/attendees is always string[] - handles JSON string or comma string from DB
 function safeTags(t: any): string[] {
   if (Array.isArray(t)) return t
   if (typeof t === 'string') {
@@ -36,7 +59,8 @@ function safeTags(t: any): string[] {
   return []
 }
 
-// PULSING CONNECTED INDICATOR
+// ================= COMPONENT: PULSING CONNECTED INDICATOR =================
+// Checks /api/notes with HEAD every 15s, shows green ping when online, red when offline
 function ConnectedIndicator({ theme }: { theme: Theme }) {
   const [online, setOnline] = useState<boolean | null>(null)
   const check = useCallback(async () => {
@@ -59,6 +83,11 @@ function ConnectedIndicator({ theme }: { theme: Theme }) {
 }
 
 export default function Page() {
+  // ================= STATE: APP CORE =================
+  // mounted: prevents hydration mismatch, isDark: derived from theme
+  // theme: light/dark, persisted via prefers-color-scheme on load
+  // isAuthed: null=checking, true/false, userEmail: logged in email
+  // search: global search for notes + appointments
   const [mounted, setMounted] = useState(false)
   const [theme, setTheme] = useState<Theme>('light')
   const [isAuthed, setIsAuthed] = useState<boolean | null>(null)
@@ -69,10 +98,19 @@ export default function Page() {
   const [loginLoading, setLoginLoading] = useState(false)
   const [userEmail, setUserEmail] = useState('')
   const [search, setSearch] = useState('')
+
+  // ================= STATE: DATA =================
+  // notes, appointments, reminders: fetched from /api/*
+  // loading: true while initial fetch
   const [notes, setNotes] = useState<Note[]>([])
   const [appointments, setAppointments] = useState<Appointment[]>([])
   const [reminders, setReminders] = useState<Reminder[]>([])
   const [loading, setLoading] = useState(true)
+
+  // ================= STATE: MODALS & EDITING =================
+  // *_modalOpen: controls visibility of 3 modals
+  // editing*: which item is being edited, null = creating new
+  // deleteTarget: {type, id} for delete confirmation modal
   const [reminderModalOpen, setReminderModalOpen] = useState(false)
   const [appointmentModalOpen, setAppointmentModalOpen] = useState(false)
   const [noteModalOpen, setNoteModalOpen] = useState(false)
@@ -80,21 +118,33 @@ export default function Page() {
   const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null)
   const [editingNote, setEditingNote] = useState<Note | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<{type:string,id:string}|null>(null)
+
+  // ================= STATE: FORMS =================
+  // rForm, aForm, nForm: controlled inputs for modals
+  // aError, nError, rError: validation messages
+  // saving*: loading states for save buttons
   const [rForm, setRForm] = useState({ title: '', notes: '', due_at: '', priority: 'medium' as Priority, repeat: 'none' as Repeat })
   const [aForm, setAForm] = useState({ title: '', description: '', start_at: '', end_at: '', location: '', attendees: '', status: 'confirmed' as ApptStatus })
   const [nForm, setNForm] = useState({ title: '', content: '', color: COLORS[1], is_pinned: false, tags: '' })
   const [aError, setAError] = useState(''); const [nError, setNError] = useState(''); const [rError, setRError] = useState('')
   const [savingNote, setSavingNote] = useState(false); const [savingAppt, setSavingAppt] = useState(false); const [savingReminder, setSavingReminder] = useState(false)
+
+  // ================= STATE: UI FEEDBACK =================
+  // toasts: stack of toast notifications bottom-right
+  // debugInfo: shows last check time + reminder count for debugging
   const [toasts, setToasts] = useState<Toast[]>([])
   const [debugInfo, setDebugInfo] = useState('')
   const isDark = theme === 'dark'
 
+  // addToast: adds toast and auto-removes after 8s
   const addToast = useCallback((title: string, body: string, type: string = 'info') => {
     const id = Date.now().toString()
     setToasts(prev => [...prev, { id, title, body, type }])
     setTimeout(() => setToasts(prev => prev.filter(t => t.id!== id)), 8000)
   }, [])
 
+  // ================= EFFECT: INITIAL AUTH & THEME =================
+  // On mount: detect dark mode preference, check localStorage qs_auth for existing session
   useEffect(() => {
     if (window.matchMedia('(prefers-color-scheme: dark)').matches) setTheme('dark')
     const raw = localStorage.getItem('qs_auth')
@@ -102,6 +152,7 @@ export default function Page() {
     setMounted(true)
   }, [])
 
+  // handleLogin: simple client-side email+password check, saves session to localStorage
   const handleLogin = () => {
     setLoginError(''); setLoginLoading(true)
     setTimeout(() => {
@@ -113,6 +164,8 @@ export default function Page() {
     }, 400)
   }
 
+  // ================= DATA FETCHING =================
+  // loadData: fetches all 3 resources in parallel from API routes
   const loadData = async () => {
     if (!isAuthed) return
     setLoading(true)
@@ -125,6 +178,8 @@ export default function Page() {
   }
   useEffect(() => { if (mounted && isAuthed) loadData() }, [mounted, isAuthed])
 
+  // ================= NOTIFICATIONS LOGIC =================
+  // showNotification: shows in-app toast + browser Notification API if permitted
   const showNotification = useCallback((title: string, body: string, type: string = 'reminder') => {
     addToast(title, body, type)
     if ('Notification' in window) {
@@ -133,10 +188,13 @@ export default function Page() {
     }
   }, [addToast])
 
+  // Request notification permission on auth
   useEffect(() => { if (!mounted ||!isAuthed) return; if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission() }, [mounted, isAuthed])
 
+  // triggerTest: manual test button for notifications
   const triggerTest = useCallback(() => { showNotification('Test OK', 'Test at ' + new Date().toLocaleTimeString(), 'test') }, [showNotification])
 
+  // EFFECT: Reminder checker - runs every 5s, triggers notification when due_at is within last 5s to 60s ago, prevents duplicate via localStorage key
   useEffect(() => {
     if (!isAuthed) return
     const check = () => {
@@ -157,6 +215,8 @@ export default function Page() {
     check(); const id = setInterval(check, 5000); return () => clearInterval(id)
   }, [reminders, isAuthed, showNotification])
 
+  // ================= CRUD: NOTES =================
+  // saveNote: validates, builds payload, POST or PUT to /api/notes, updates local state
   const saveNote = async () => {
     if (!nForm.title.trim() &&!nForm.content.trim()) { setNError('Required'); return }
     setSavingNote(true)
@@ -171,6 +231,8 @@ export default function Page() {
     } catch (e:any) { setNError(e.message) } finally { setSavingNote(false) }
   }
 
+  // ================= CRUD: APPOINTMENTS =================
+  // saveAppointment: validates title + end > start, then POST/PUT
   const saveAppointment = async () => {
     if (!aForm.title.trim()) { setAError('Title required'); return }
     if (aForm.start_at && aForm.end_at && new Date(aForm.end_at) <= new Date(aForm.start_at)) { setAError('End must be after start'); return }
@@ -186,6 +248,8 @@ export default function Page() {
     } catch (e:any) { setAError(e.message) } finally { setSavingAppt(false) }
   }
 
+  // ================= CRUD: REMINDERS =================
+  // saveReminder: validates title + due_at, POST/PUT, shows toast with due time
   const saveReminder = async () => {
     if (!rForm.title.trim()) { setRError('Required'); return }
     if (!rForm.due_at) { setRError('Date required'); return }
@@ -201,6 +265,7 @@ export default function Page() {
     } catch (e:any) { setRError(e.message) } finally { setSavingReminder(false) }
   }
 
+  // confirmDelete: deletes by type (notes/appointments/reminders) and updates local state
   const confirmDelete = async () => {
     if (!deleteTarget) return
     await fetch('/api/' + deleteTarget.type + 's/' + deleteTarget.id, { method: 'DELETE' })
@@ -211,6 +276,9 @@ export default function Page() {
     addToast('Deleted', deleteTarget.type + ' removed', 'info')
   }
 
+  // ================= FILTERING =================
+  // filteredNotes: search + pinned sort (pinned first)
+  // filteredAppointments: search by title/desc/location
   const filteredNotes = useMemo(() => {
     const q = search.toLowerCase()
     let list = notes
@@ -224,12 +292,15 @@ export default function Page() {
     return appointments.filter(a => a.title.toLowerCase().includes(q) || a.description.toLowerCase().includes(q) || a.location.toLowerCase().includes(q))
   }, [appointments, search])
 
+  // ================= RENDER: LOADING =================
   if (!mounted || isAuthed === null) return <div className="min-h-screen grid place-items-center bg-gradient-to-br from-[#070A14] via-[#10132A] to-[#1E1B4B] text-white">Loading...</div>
 
+  // ================= RENDER: LOGIN SCREEN =================
+  // 40% width card, gradient header, email+password inputs, sign in button
   if (!isAuthed) {
     return (
       <div className={isDark? 'min-h-screen grid place-items-center p-4 bg-gradient-to-br from-[#070A14] via-[#10132A] to-[#1E1B4B] text-white' : 'min-h-screen grid place-items-center p-4 bg-gradient-to-br from-indigo-100 via-white to-fuchsia-100'}>
-        <div className={isDark? 'w-[90%] md:w-[40%] max-w- rounded- border border-white/10 bg-gradient-to-br from-[#151821]/90 to-[#1C1F2B]/90 backdrop-blur-2xl p-8 shadow-[0_20px_60px_rgba(0,0,0,0.5)]' : 'w-[90%] md:w-[40%] max-w- rounded- border border-white/60 bg-white/90 backdrop-blur-2xl p-8 shadow-[0_20px_60px_rgba(0,0,0,0.15)]'}>
+        <div className={isDark? 'w-[90%] md:w-[40%] max-w-lg rounded-3xl border border-white/10 bg-gradient-to-br from-[#151821]/90 to-[#1C1F2B]/90 backdrop-blur-2xl p-8 shadow-[0_20px_60px_rgba(0,0,0,0.5)]' : 'w-[90%] md:w-[40%] max-w-lg rounded-3xl border border-white/60 bg-white/90 backdrop-blur-2xl p-8 shadow-[0_20px_60px_rgba(0,0,0,0.15)]'}>
           <div className="h-1.5 w-full bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 rounded-full mb-6"/>
           <div className="flex items-center gap-3 mb-6">
             <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-600 to-fuchsia-600 grid place-items-center text-white shadow-lg"><Lock size={20}/></div>
@@ -260,14 +331,18 @@ export default function Page() {
 
   if (loading) return <div className="min-h-screen grid place-items-center bg-gradient-to-br from-[#070A14] via-[#10132A] to-[#1E1B4B] text-white">Loading data...</div>
 
+  // ================= STYLE TOKENS =================
+  // pageBg, cardBase, headerBase, inputBase: Tailwind classes for dark/light variants
   const pageBg = isDark? 'min-h-screen p-6 bg-gradient-to-br from-[#070A14] via-[#10132A] to-[#1E1B4B] text-white' : 'min-h-screen p-6 bg-gradient-to-br from-indigo-50 via-white to-fuchsia-50 text-[#111827]'
-  const cardBase = isDark? 'rounded- p-6 bg-gradient-to-br from-[#151821]/80 to-[#1C1F2B]/80 border border-white/10 backdrop-blur-xl shadow-[0_10px_40px_rgba(0,0,0,0.3)]' : 'rounded- p-6 bg-white/80 border border-white/60 shadow-xl backdrop-blur-xl'
-  const headerBase = isDark? 'rounded- p-6 bg-gradient-to-br from-[#151821]/90 to-[#1E1B4B]/60 border border-white/10 backdrop-blur-xl shadow-[0_10px_40px_rgba(0,0,0,0.4)] flex justify-between items-center mb-6' : 'rounded- p-6 bg-white/80 border border-white/60 shadow-xl backdrop-blur-xl flex justify-between items-center mb-6'
+  const cardBase = isDark? 'rounded-3xl p-6 bg-gradient-to-br from-[#151821]/80 to-[#1C1F2B]/80 border border-white/10 backdrop-blur-xl shadow-[0_10px_40px_rgba(0,0,0,0.3)]' : 'rounded-3xl p-6 bg-white/80 border border-white/60 shadow-xl backdrop-blur-xl'
+  const headerBase = isDark? 'rounded-3xl p-6 bg-gradient-to-br from-[#151821]/90 to-[#1E1B4B]/60 border border-white/10 backdrop-blur-xl shadow-[0_10px_40px_rgba(0,0,0,0.4)] flex justify-between items-center mb-6' : 'rounded-3xl p-6 bg-white/80 border border-white/60 shadow-xl backdrop-blur-xl flex justify-between items-center mb-6'
   const inputBase = isDark? 'w-full h-11 rounded-2xl px-4 bg-white/5 border border-white/10 text-white placeholder:text-white/40' : 'w-full h-11 rounded-2xl px-4 bg-white border border-gray-200'
 
   return (
     <div className={pageBg}>
       <div className="max-w-6xl mx-auto">
+        {/* ================= HEADER ================= */}
+        {/* Logo, user email, connected indicator, test notification, theme toggle, logout */}
         <div className={headerBase}>
           <div className="flex items-center gap-4">
             <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-indigo-600 to-fuchsia-600 grid place-items-center text-white shadow-lg"><CircleCheck size={18}/></div>
@@ -284,16 +359,21 @@ export default function Page() {
           </div>
         </div>
 
+        {/* ================= DEBUG BAR ================= */}
+        {/* Shows last reminder check time + connected indicator */}
         <div className={isDark? 'mb-4 p-3 rounded-2xl bg-white/5 border border-white/10 text-white/70 text-xs font-mono backdrop-blur flex justify-between' : 'mb-4 p-3 rounded-2xl bg-black text-white text-xs font-mono flex justify-between'}>
           <span>DEBUG: {debugInfo} | {reminders.length} reminders</span>
           <span className="flex items-center gap-2"><ConnectedIndicator theme={theme}/></span>
         </div>
 
+        {/* ================= MAIN 3-COLUMN GRID ================= */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* COLUMN 1: NOTES */}
           <div className={cardBase}>
             <div className="flex justify-between items-center mb-4">
               <h2 className="font-bold flex items-center gap-2"><StickyNote size={16} className="text-indigo-400"/>Notes ({filteredNotes.length})</h2>
-              <button onClick={()=>{setEditingNote(null); setNForm({title:'', content:'', color: COLORS[1], is_pinned: false, tags: ''}); setNoteModalOpen(true)}} className="px-3 py-1 rounded-full bg-gradient-to-r from-indigo-600 to-fuchsia-600 text-white text-xs cursor-pointer flex items-center gap-1"><Plus size={12}/>New</button>
+              {/* Notes New Button - Gradient indigo to fuchsia */}
+              <button onClick={()=>{setEditingNote(null); setNForm({title:'', content:'', color: COLORS[1], is_pinned: false, tags: ''}); setNoteModalOpen(true)}} className="px-3 py-1 rounded-full bg-gradient-to-r from-indigo-600 to-fuchsia-600 text-white text-xs cursor-pointer flex items-center gap-1 shadow-[0_4px_12px_rgba(99,102,241,0.4)]"><Plus size={12}/>New</button>
             </div>
             <div className="space-y-2">
               {filteredNotes.map(n=>(
@@ -305,10 +385,12 @@ export default function Page() {
             </div>
           </div>
 
+          {/* COLUMN 2: APPOINTMENTS */}
           <div className={cardBase}>
             <div className="flex justify-between items-center mb-4">
               <h2 className="font-bold flex items-center gap-2"><Calendar size={16} className="text-fuchsia-400"/>Appointments ({filteredAppointments.length})</h2>
-              <button onClick={()=>{const now=new Date(); setAForm({title:'', description:'', start_at: toLocalInput(now.toISOString()), end_at: toLocalInput(new Date(now.getTime()+3600000).toISOString()), location:'', attendees:'', status:'confirmed'}); setAppointmentModalOpen(true)}} className="px-3 py-1 rounded-full bg-gradient-to-r from-fuchsia-600 to-violet-600 text-white text-xs cursor-pointer flex items-center gap-1"><Plus size={12}/>New</button>
+              {/* Appointments New Button - Gradient fuchsia to violet */}
+              <button onClick={()=>{const now=new Date(); setAForm({title:'', description:'', start_at: toLocalInput(now.toISOString()), end_at: toLocalInput(new Date(now.getTime()+3600000).toISOString()), location:'', attendees:'', status:'confirmed'}); setAppointmentModalOpen(true)}} className="px-3 py-1 rounded-full bg-gradient-to-r from-fuchsia-600 to-violet-600 text-white text-xs cursor-pointer flex items-center gap-1 shadow-[0_4px_12px_rgba(192,38,211,0.4)]"><Plus size={12}/>New</button>
             </div>
             <div className="space-y-3">
               {filteredAppointments.length===0 && <p className="text-xs opacity-50 text-center py-6">No appointments yet</p>}
@@ -335,10 +417,12 @@ export default function Page() {
             </div>
           </div>
 
+          {/* COLUMN 3: REMINDERS - UPDATED GRADIENT BUTTON */}
           <div className={cardBase}>
             <div className="flex justify-between items-center mb-4">
               <h2 className="font-bold flex items-center gap-2"><Bell size={16} className="text-emerald-400"/>Reminders ({reminders.length})</h2>
-              <button onClick={()=>{setRForm({title:'', notes:'', due_at: toLocalInput(new Date().toISOString()), priority:'medium', repeat:'none'}); setReminderModalOpen(true)}} className="px-3 py-1 rounded-full bg-white/10 border border-white/10 text-white text-xs cursor-pointer">+ New</button>
+              {/* UPDATED: Now gradient emerald->teal like Notes/Appointments, not plain white/10 */}
+              <button onClick={()=>{setRForm({title:'', notes:'', due_at: toLocalInput(new Date().toISOString()), priority:'medium', repeat:'none'}); setReminderModalOpen(true)}} className="px-3 py-1 rounded-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white text-xs cursor-pointer flex items-center gap-1 shadow-[0_4px_12px_rgba(16,185,129,0.4)]"><Plus size={12}/>New</button>
             </div>
             <div className="space-y-2">
               {reminders.map(r=>{
@@ -357,14 +441,16 @@ export default function Page() {
         </div>
       </div>
 
+      {/* ================= MODAL: NOTES ================= */}
       {noteModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"><div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={()=>setNoteModalOpen(false)}/><div className={isDark? 'relative bg-gradient-to-br from-[#151821] to-[#1C1F2B] border border-white/10 rounded- p-6 w-full max-w-md' : 'relative bg-white rounded- p-6 w-full max-w-md'}><h3 className="font-bold mb-3">Note</h3><input value={nForm.title} onChange={e=>setNForm({...nForm, title:e.target.value})} placeholder="Title" className={inputBase + ' mb-2'}/><textarea value={nForm.content} onChange={e=>setNForm({...nForm, content:e.target.value})} rows={4} className={isDark? 'w-full rounded-2xl border border-white/10 bg-white/5 p-3 mb-2 text-white' : 'w-full rounded-2xl border p-3 mb-2'}/><div className="flex justify-end gap-2"><button onClick={()=>setNoteModalOpen(false)} className="h-10 px-4 rounded-2xl border border-white/10 cursor-pointer">Cancel</button><button onClick={saveNote} className="h-10 px-4 rounded-2xl bg-gradient-to-r from-indigo-600 to-fuchsia-600 text-white cursor-pointer">{savingNote? 'Saving...' : 'Save'}</button></div></div></div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"><div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={()=>setNoteModalOpen(false)}/><div className={isDark? 'relative bg-gradient-to-br from-[#151821] to-[#1C1F2B] border border-white/10 rounded-3xl p-6 w-full max-w-md' : 'relative bg-white rounded-3xl p-6 w-full max-w-md'}><h3 className="font-bold mb-3">Note</h3><input value={nForm.title} onChange={e=>setNForm({...nForm, title:e.target.value})} placeholder="Title" className={inputBase + ' mb-2'}/><textarea value={nForm.content} onChange={e=>setNForm({...nForm, content:e.target.value})} rows={4} className={isDark? 'w-full rounded-2xl border border-white/10 bg-white/5 p-3 mb-2 text-white' : 'w-full rounded-2xl border p-3 mb-2'}/><div className="flex justify-end gap-2"><button onClick={()=>setNoteModalOpen(false)} className="h-10 px-4 rounded-2xl border border-white/10 cursor-pointer">Cancel</button><button onClick={saveNote} className="h-10 px-4 rounded-2xl bg-gradient-to-r from-indigo-600 to-fuchsia-600 text-white cursor-pointer">{savingNote? 'Saving...' : 'Save'}</button></div></div></div>
       )}
 
+      {/* ================= MODAL: APPOINTMENTS ================= */}
       {appointmentModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={()=>setAppointmentModalOpen(false)}/>
-          <div className={isDark? 'relative bg-gradient-to-br from-[#151821] to-[#1C1F2B] border border-white/10 rounded- p-6 w-full max-w-md shadow-2xl max-h- overflow-y-auto' : 'relative bg-white rounded- p-6 w-full max-w-md shadow-2xl max-h- overflow-y-auto'}>
+          <div className={isDark? 'relative bg-gradient-to-br from-[#151821] to-[#1C1F2B] border border-white/10 rounded-3xl p-6 w-full max-w-md shadow-2xl max-h- overflow-y-auto' : 'relative bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl max-h- overflow-y-auto'}>
             <h3 className="font-bold mb-3">{editingAppointment? 'Edit Appointment' : 'New Appointment'}</h3>
             {aError && <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 p-2 rounded-xl mb-2">{aError}</div>}
             <input value={aForm.title} onChange={e=>setAForm({...aForm, title:e.target.value})} placeholder="Title *" className={inputBase + ' mb-2'}/>
@@ -385,17 +471,21 @@ export default function Page() {
         </div>
       )}
 
+      {/* ================= MODAL: REMINDERS ================= */}
       {reminderModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"><div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={()=>setReminderModalOpen(false)}/><div className={isDark? 'relative bg-gradient-to-br from-[#151821] to-[#1C1F2B] border border-white/10 rounded- p-6 w-full max-w-md' : 'relative bg-white rounded- p-6 w-full max-w-md'}><h3 className="font-bold mb-3">Reminder</h3>{rError && <div className="text-xs text-red-400 bg-red-500/10 p-2 rounded-xl mb-2">{rError}</div>}<input value={rForm.title} onChange={e=>setRForm({...rForm, title:e.target.value})} placeholder="Title" className={inputBase + ' mb-2'}/><input type="datetime-local" value={rForm.due_at} onChange={e=>setRForm({...rForm, due_at:e.target.value})} className={inputBase + ' mb-2'}/><div className="flex justify-end gap-2"><button onClick={()=>setReminderModalOpen(false)} className="h-10 px-4 rounded-2xl border border-white/10 cursor-pointer">Cancel</button><button onClick={saveReminder} className="h-10 px-4 rounded-2xl bg-gradient-to-r from-indigo-600 to-fuchsia-600 text-white cursor-pointer">Save</button></div></div></div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"><div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={()=>setReminderModalOpen(false)}/><div className={isDark? 'relative bg-gradient-to-br from-[#151821] to-[#1C1F2B] border border-white/10 rounded-3xl p-6 w-full max-w-md' : 'relative bg-white rounded-3xl p-6 w-full max-w-md'}><h3 className="font-bold mb-3">Reminder</h3>{rError && <div className="text-xs text-red-400 bg-red-500/10 p-2 rounded-xl mb-2">{rError}</div>}<input value={rForm.title} onChange={e=>setRForm({...rForm, title:e.target.value})} placeholder="Title" className={inputBase + ' mb-2'}/><input type="datetime-local" value={rForm.due_at} onChange={e=>setRForm({...rForm, due_at:e.target.value})} className={inputBase + ' mb-2'}/><div className="flex justify-end gap-2"><button onClick={()=>setReminderModalOpen(false)} className="h-10 px-4 rounded-2xl border border-white/10 cursor-pointer">Cancel</button><button onClick={saveReminder} className="h-10 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 text-white cursor-pointer shadow-[0_4px_12px_rgba(16,185,129,0.4)]">Save</button></div></div></div>
       )}
 
+      {/* ================= MODAL: DELETE CONFIRM ================= */}
       {deleteTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"><div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={()=>setDeleteTarget(null)}/><div className={isDark? 'relative bg-gradient-to-br from-[#151821] to-[#1C1F2B] border border-white/10 rounded- p-6 w-full max-w-sm' : 'relative bg-white rounded- p-6 w-full max-w-sm'}><p className="mb-4">Delete this {deleteTarget.type}?</p><div className="flex justify-end gap-2"><button onClick={()=>setDeleteTarget(null)} className="h-10 px-4 rounded-2xl border border-white/10 cursor-pointer">Cancel</button><button onClick={confirmDelete} className="h-10 px-4 rounded-2xl bg-red-600 text-white cursor-pointer">Delete</button></div></div></div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"><div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={()=>setDeleteTarget(null)}/><div className={isDark? 'relative bg-gradient-to-br from-[#151821] to-[#1C1F2B] border border-white/10 rounded-3xl p-6 w-full max-w-sm' : 'relative bg-white rounded-3xl p-6 w-full max-w-sm'}><p className="mb-4">Delete this {deleteTarget.type}?</p><div className="flex justify-end gap-2"><button onClick={()=>setDeleteTarget(null)} className="h-10 px-4 rounded-2xl border border-white/10 cursor-pointer">Cancel</button><button onClick={confirmDelete} className="h-10 px-4 rounded-2xl bg-red-600 text-white cursor-pointer">Delete</button></div></div></div>
       )}
 
-      <div className="fixed bottom-6 right-6 z-[100] flex flex-col gap-2 w-[90%] max-w- pointer-events-none">
+      {/* ================= TOAST STACK ================= */}
+      {/* Fixed bottom-right, shows reminder/test notifications */}
+      <div className="fixed bottom-6 right-6 z-[100] flex flex-col gap-2 w-[90%] max-w-sm pointer-events-none">
         {toasts.map(t=>(
-          <div key={t.id} className={isDark? 'pointer-events-auto rounded- border border-white/10 bg-gradient-to-br from-[#1C1F2B]/90 to-[#151821]/90 backdrop-blur-xl p-4 shadow-2xl flex gap-3' : 'pointer-events-auto rounded- border bg-white p-4 shadow-xl flex gap-3'}>
+          <div key={t.id} className={isDark? 'pointer-events-auto rounded-2xl border border-white/10 bg-gradient-to-br from-[#1C1F2B]/90 to-[#151821]/90 backdrop-blur-xl p-4 shadow-2xl flex gap-3' : 'pointer-events-auto rounded-2xl border bg-white p-4 shadow-xl flex gap-3'}>
             <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-indigo-600 to-fuchsia-600 grid place-items-center text-white"><Bell size={14}/></div><div className="flex-1"><p className="text-sm font-bold">{t.title}</p><p className="text-xs opacity-70">{t.body}</p></div><button onClick={()=>setToasts(prev=>prev.filter(x=>x.id!==t.id))} className="w-6 h-6 grid place-items-center rounded-full bg-white/10 cursor-pointer"><X size={12}/></button>
           </div>
         ))}
